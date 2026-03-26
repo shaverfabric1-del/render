@@ -14,11 +14,19 @@ from fastapi.middleware.cors import CORSMiddleware
 
 BASE = "https://aciautosale.com"
 LIST_URL = f"{BASE}/newandusedcars?clearall=1"
-UA = {"User-Agent": "Mozilla/5.0"}
+BROWSER_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+    ),
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9",
+}
 
 SESSION = requests.Session()
 # Avoid picking up system HTTP(S)_PROXY / corporate proxy env vars.
 SESSION.trust_env = False
+SESSION.headers.update(BROWSER_HEADERS)
 
 
 def _abs_url(href: str) -> str:
@@ -78,7 +86,9 @@ def _extract_main_image(soup: BeautifulSoup) -> Optional[str]:
 
 
 def _parse_vdp(url: str) -> Dict[str, Any]:
-    html = SESSION.get(url, timeout=30, headers=UA).text
+    r = SESSION.get(url, timeout=30)
+    r.raise_for_status()
+    html = r.text
     soup = BeautifulSoup(html, "html.parser")
 
     title = _clean_text(soup.title.get_text(" ", strip=True)) if soup.title else ""
@@ -112,7 +122,10 @@ def _parse_vdp(url: str) -> Dict[str, Any]:
 
 
 def _get_vdp_links(limit: int) -> List[str]:
-    html = SESSION.get(LIST_URL, timeout=30, headers=UA).text
+    r = SESSION.get(LIST_URL, timeout=45)
+    if r.status_code != 200:
+        return []
+    html = r.text
     soup = BeautifulSoup(html, "html.parser")
     links: List[str] = []
     seen = set()
@@ -125,6 +138,15 @@ def _get_vdp_links(limit: int) -> List[str]:
         links.append(_abs_url(href))
         if len(links) >= limit:
             break
+    if not links:
+        for m in re.finditer(r'href="(/bhphvdp/\d+/[^"?#]+)"', html):
+            href = m.group(1).split("?", 1)[0]
+            if href in seen:
+                continue
+            seen.add(href)
+            links.append(_abs_url(href))
+            if len(links) >= limit:
+                break
     return links
 
 
